@@ -51,7 +51,7 @@ export async function renderSettings({ rerender }) {
 
     <h2>Training</h2>
     <div class="card">
-      <label class="field"><span>Pausenzeit nach jedem Satz (Sekunden)</span><input id="rest" inputmode="numeric" value="${esc(restSeconds)}"></label>
+      <label class="field"><span>Pausenzeit nach jedem Satz (Sekunden)</span><input id="restsec" inputmode="numeric" value="${esc(restSeconds)}"></label>
       <button class="btn primary block" data-act="saverest">Speichern</button>
     </div>
 
@@ -110,7 +110,7 @@ export async function renderSettings({ rerender }) {
       toast(key ? 'KI-Einstellungen gespeichert' : 'Schlüssel entfernt');
     }
     if (act === 'saverest') {
-      const s = Math.round(num($('#rest', el).value));
+      const s = Math.round(num($('#restsec', el).value));
       if (!s || s < 10 || s > 900) return toast('Bitte 10–900 Sekunden eingeben');
       await setSetting('restSeconds', s);
       toast('Pausenzeit gespeichert');

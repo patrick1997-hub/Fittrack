@@ -3,7 +3,7 @@ import * as training from './training.js';
 import * as progress from './progress.js';
 import * as nutrition from './nutrition.js';
 import * as settings from './settings.js';
-import { $$ } from './ui.js';
+import { $$, closeSheet } from './ui.js';
 
 const routes = [
   [/^\/food$/, 'food', nutrition.renderDay],
@@ -25,6 +25,7 @@ let lastPath = null;
 
 async function render() {
   while (cleanups.length) cleanups.pop()();
+  closeSheet();
   const hash = location.hash.slice(1) || '/food';
   const [path, query = ''] = hash.split('?');
   const params = new URLSearchParams(query);

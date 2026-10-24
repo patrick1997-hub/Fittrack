@@ -1,5 +1,5 @@
 // Service Worker: App offline verfügbar machen.
-const CACHE = 'fittrack-v1';
+const CACHE = 'fittrack-v2';
 const SHELL = [
   './',
   './index.html',

@@ -19,6 +19,59 @@ function exerciseHistory(sessions, exerciseId) {
   return rows.sort((a, b) => a.session.startedAt.localeCompare(b.session.startedAt));
 }
 
+// Woche = Montag bis Sonntag. offset 0 = diese Woche, 1 = Vorwoche.
+function weekStats(sessions, offset) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7) - 7 * offset);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  const list = sessions.filter((s) => s.finishedAt && new Date(s.startedAt) >= start && new Date(s.startedAt) < end);
+  const best = {};
+  let sets = 0;
+  let volume = 0;
+  for (const s of list) {
+    for (const e of s.entries) {
+      for (const x of e.sets.filter((y) => y.done)) {
+        sets += 1;
+        volume += (num(x.weight) || 0) * (num(x.reps) || 0);
+        best[e.exerciseId] = Math.max(best[e.exerciseId] || 0, num(x.weight) || 0);
+      }
+    }
+  }
+  return { count: list.length, sets, volume, best };
+}
+
+function weekCompareHtml(sessions, exercises) {
+  const now = weekStats(sessions, 0);
+  const last = weekStats(sessions, 1);
+  if (!now.count && !last.count) return '';
+  const delta = (a, b, unit = '', pct = false) => {
+    if (!b) return '<span class="muted">–</span>';
+    const d = pct ? Math.round(((a - b) / b) * 100) : a - b;
+    const cls = d > 0 ? 'up' : d < 0 ? 'down' : 'muted';
+    return `<b class="${cls}">${d > 0 ? '+' : ''}${fmt(d, pct ? 0 : 2)}${pct ? ' %' : unit}</b>`;
+  };
+  const names = Object.fromEntries(exercises.map((x) => [x.id, x.name]));
+  const gains = Object.keys(now.best)
+    .filter((id) => last.best[id] && names[id])
+    .map((id) => ({ name: names[id], now: now.best[id], diff: now.best[id] - last.best[id] }))
+    .sort((a, b) => b.diff - a.diff);
+  return `<h2>Diese Woche vs. Vorwoche</h2>
+    <div class="card">
+      <div class="kv" style="grid-template-columns:1fr auto auto auto;gap:6px 14px">
+        <span></span><span class="muted small">Diese</span><span class="muted small">Vorwoche</span><span class="muted small">Δ</span>
+        <span>Trainings</span><b>${now.count}</b><b class="muted">${last.count}</b>${delta(now.count, last.count)}
+        <span>Sätze</span><b>${now.sets}</b><b class="muted">${last.sets}</b>${delta(now.sets, last.sets)}
+        <span>Volumen (kg)</span><b>${fmt(now.volume)}</b><b class="muted">${fmt(last.volume)}</b>${delta(now.volume, last.volume, '', true)}
+      </div>
+      ${gains.length ? `<div style="margin-top:14px" class="muted small">Schwerster Satz je Übung</div>
+        ${gains.slice(0, 8).map((g) => `<div class="row between" style="margin-top:6px"><span>${esc(g.name)}</span><span>${fmt(g.now, 2)} kg ${delta(g.diff, 1, ' kg')}</span></div>`).join('')}`
+        : '<p class="hint" style="margin:12px 0 0">Sobald du eine Übung in beiden Wochen gemacht hast, siehst du hier deine Steigerung.</p>'}
+      <p class="hint" style="margin:10px 0 0">Die laufende Woche zählt bis heute – gegen Wochenende wird der Vergleich aussagekräftiger.</p>
+    </div>`;
+}
+
 export async function renderHome({ rerender }) {
   const [weights, sessions, exercises] = await Promise.all([db.all('weights'), db.all('sessions'), db.all('exercises')]);
   weights.sort((a, b) => a.date.localeCompare(b.date));
@@ -38,6 +91,7 @@ export async function renderHome({ rerender }) {
       <div class="stat"><b>${thisWeek}</b><span>letzte 7 Tage</span></div>
       <div class="stat"><b>${latest ? fmt(latest.kg, 1) : '–'}</b><span>kg Körpergewicht</span></div>
     </div>
+    ${weekCompareHtml(sessions, exercises)}
 
     <h2>Körpergewicht</h2>
     <div class="card">
@@ -57,7 +111,7 @@ export async function renderHome({ rerender }) {
         const diff = last.best - first.best;
         return `<a class="list-item" href="#/progress/exercise/${x.id}">
           <span class="grow"><div class="name">${esc(x.name)}</div><div class="muted small">${hist.length}× trainiert · zuletzt ${shortDate(last.session.startedAt)}</div></span>
-          <span class="meta">${fmt(last.best, 2)} kg${hist.length > 1 && diff ? ` <span style="color:${diff > 0 ? 'var(--good)' : 'var(--warn)'}">${diff > 0 ? '+' : ''}${fmt(diff, 2)}</span>` : ''}</span>
+          <span class="meta">${fmt(last.best, 2)} kg${hist.length > 1 && diff ? ` <span style="color:${diff > 0 ? 'var(--good)' : 'var(--warn)'}">${diff > 0 ? '+' : ''}${fmt(diff, 2)} seit Start</span>` : ''}</span>
           <span class="chev">›</span></a>`;
       }).join('') : '<div class="meal-empty" style="padding-top:12px">Sobald du ein Training beendest, siehst du hier deine Entwicklung.</div>'}
     </div>

@@ -1,6 +1,7 @@
 // Lebensmittel-Daten: lokale Datenbank zuerst, dann Open Food Facts (kostenlos, ohne Schlüssel).
 import { db } from './db.js';
 import { round } from './ui.js';
+import { normalize } from './food-db.js';
 
 const OFF = 'https://world.openfoodfacts.org';
 const FIELDS = 'code,product_name,product_name_de,generic_name_de,brands,nutriments,serving_quantity,serving_size';
@@ -40,9 +41,9 @@ export async function lookupBarcode(code) {
 }
 
 export async function searchLocal(term) {
-  const t = term.toLowerCase();
+  const t = normalize(term);
   return (await db.all('foods'))
-    .filter((f) => `${f.name} ${f.brand || ''}`.toLowerCase().includes(t))
+    .filter((f) => normalize(`${f.name} ${f.brand || ''}`).includes(t))
     .sort((a, b) => (b.lastUsed || '').localeCompare(a.lastUsed || ''))
     .slice(0, 20);
 }

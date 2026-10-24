@@ -212,6 +212,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--a
   background: var(--card-2); color: var(--muted); font-size: 18px; font-weight: 800;
 }
 tr.done .checkbtn { background: var(--good); color: #fff; }
+.cmp { margin-top: 8px; padding: 0 2px; }
+.cmp:empty { display: none; }
+.up { color: var(--good); }
+.down { color: var(--warn); }
 .ex-actions { display: flex; gap: 8px; margin-top: 8px; }
 .ex-actions .btn { flex: 1; }
 .timer { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 15px; }
@@ -261,6 +265,7 @@ body.resting .page { padding-top: calc(env(safe-area-inset-top) + 76px); }
   max-width: 640px; margin: 0 auto;
 }
 .sheet-wrap.open .sheet { transform: translateY(0); }
+.sheet.tall { top: calc(env(safe-area-inset-top) + 12px); max-height: none; }
 .sheet-wrap.open .sheet-backdrop { opacity: 1; }
 .sheet-grip { width: 38px; height: 5px; border-radius: 9px; background: var(--line); margin: 0 auto 10px; }
 .sheet h2 { margin: 6px 0 14px; font-size: 20px; }
@@ -291,5 +296,27 @@ body.resting .page { padding-top: calc(env(safe-area-inset-top) + 76px); }
 .seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--card-2); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
 .seg button { border: 0; background: none; font: inherit; font-size: 15px; padding: 8px; border-radius: 8px; color: var(--text); }
 .seg button.active { background: var(--card); font-weight: 650; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+
+#searchform { scroll-margin-top: calc(env(safe-area-inset-top) + 8px); }
+.page.add-page { padding-bottom: 45vh; }
+
+.seg .segbtn { text-align: center; padding: 8px; border-radius: 8px; color: var(--text); font-size: 15px; }
+.seg .segbtn.active { background: var(--card); font-weight: 650; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.list-item .meta.up { color: var(--good); }
+.list-item .meta.down { color: var(--warn); }
+
+.chart .wbar.ok { fill: var(--good); }
+.chart .wbar.under { fill: var(--carbs); }
+.chart .wbar.over { fill: var(--warn); }
+.chart .wbar.empty { fill: var(--line); }
+.chart .goal { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.chart .tgoal { stroke: var(--text); stroke-width: 2; stroke-dasharray: 3 2; }
+.dash { display: inline-block; width: 12px; border-top: 2px dashed var(--text); margin-right: 5px; vertical-align: 3px; }
+.chart .axis.today { fill: var(--accent); font-weight: 700; }
+.legend span { white-space: nowrap; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+.dot.ok { background: var(--good); }
+.dot.under { background: var(--carbs); }
+.dot.over { background: var(--warn); }
 
 .hint { font-size: 13px; color: var(--muted); margin: -4px 2px 12px; }

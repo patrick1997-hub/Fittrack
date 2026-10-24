@@ -67,6 +67,38 @@ function makeEntry(exercise, sessions, setsCount, reps) {
   };
 }
 
+// Vergleich mit dem letzten Mal: Bestsatz und (bei gleich vielen Sätzen) Volumen.
+export function compareHtml(entry) {
+  const prev = entry.prev || [];
+  if (!prev.length) return '';
+  const done = entry.sets.filter((s) => s.done);
+  const best = (arr) => Math.max(...arr.map((s) => num(s.weight) || 0));
+  const vol = (arr) => arr.reduce((v, s) => v + (num(s.weight) || 0) * (num(s.reps) || 0), 0);
+  const signed = (n, unit, digits = 1) => {
+    const cls = n > 0 ? 'up' : n < 0 ? 'down' : '';
+    return `<b class="${cls}">${n > 0 ? '+' : ''}${fmt(n, digits)}${unit}</b>`;
+  };
+  if (!done.length) return `<span class="muted">Letztes Mal: ${fmt(best(prev), 2)} kg Bestsatz · ${fmt(vol(prev))} kg Volumen</span>`;
+  const parts = [`Bestsatz ${signed(best(done) - best(prev), ' kg', 2)}`];
+  if (done.length >= prev.length && vol(prev)) parts.push(`Volumen ${signed(((vol(done) - vol(prev)) / vol(prev)) * 100, ' %', 0)}`);
+  else parts.push(`<span class="muted">Volumen-Vergleich nach ${prev.length} Sätzen</span>`);
+  return `<span class="muted">vs. letztes Mal:</span> ${parts.join(' · ')}`;
+}
+
+// Wenn im Training Übungen getauscht/ergänzt wurden: fragen, ob die Vorlage so übernommen werden soll.
+async function offerTemplateUpdate(session) {
+  if (!session.planId || !session.entries.length) return;
+  const plan = await db.get('plans', session.planId);
+  if (!plan) return;
+  const before = plan.items.map((it) => it.exerciseId).join(',');
+  const after = session.entries.map((e) => e.exerciseId).join(',');
+  if (before === after) return;
+  if (!confirm(`Du hast die Übungen geändert. Soll die Vorlage „${plan.name}“ so gespeichert werden?\n\n„Abbrechen“ = Vorlage bleibt wie sie war (z. B. wenn nur ein Gerät besetzt war).`)) return;
+  const old = Object.fromEntries(plan.items.map((it) => [it.exerciseId, it]));
+  plan.items = session.entries.map((e) => old[e.exerciseId] || { exerciseId: e.exerciseId, sets: String(e.sets.length), reps: e.targetReps || '' });
+  await db.put('plans', plan);
+}
+
 // ---------- Übersicht ----------
 
 export async function renderHome() {
@@ -82,6 +114,8 @@ export async function renderHome() {
   const el = mount(`<div class="page">
     <div class="topbar"><h1>Training</h1></div>
     ${active ? `<a class="banner" href="#/train/session/${active.id}">▶ Laufendes Training: ${esc(active.planName)} – weiter</a>` : ''}
+    <h2 style="margin-top:4px">Vorlagen</h2>
+    <p class="hint">Eine Vorlage enthält deine Übungen. Beim Start sind sie schon drin – du trägst nur noch die Sätze ein und kannst Übungen im Training tauschen, wenn ein Gerät besetzt ist.</p>
     ${plans.map((p) => `
       <div class="card plan-card">
         <a class="grow" href="#/train/plan/${p.id}" style="color:inherit">
@@ -92,7 +126,7 @@ export async function renderHome() {
         <button class="btn primary small" data-start="${p.id}">Start</button>
       </div>`).join('')}
     <div class="row" style="gap:10px">
-      <button class="btn grow" data-act="newplan">+ Neuer Plan</button>
+      <button class="btn grow" data-act="newplan">+ Neue Vorlage</button>
       <button class="btn grow" data-act="free">Freies Training</button>
     </div>
     <h2>Übungen</h2>
@@ -186,6 +220,7 @@ export async function renderSession({ match, rerender }) {
           <thead><tr><th>Satz</th><th>Vorher</th><th>kg</th><th>Wdh</th><th></th></tr></thead>
           <tbody>${entry.sets.map((s, j) => row(entry, i, s, j)).join('')}</tbody>
         </table>
+        <div class="cmp small" data-cmp="${i}">${compareHtml(entry)}</div>
         <div class="ex-actions">
           <button class="btn soft small" data-act="addset">+ Satz</button>
           <button class="btn small" data-act="delset" ${entry.sets.length ? '' : 'disabled'}>− Satz</button>
@@ -230,6 +265,51 @@ export async function renderSession({ match, rerender }) {
     save();
   });
 
+  const isNum = (v) => /^\d+([.,]\d+)?$/.test(v);
+  const updateCompare = (i) => {
+    const box = $(`[data-cmp="${i}"]`, el);
+    if (box) box.innerHTML = compareHtml(session.entries[i]);
+  };
+
+  // Satz übernehmen: fehlendes Feld aus dem Vorschlag füllen; grün, sobald kg und Wdh drinstehen.
+  const commitRow = async (tr, from = null) => {
+    const entry = session.entries[tr.dataset.i];
+    const set = entry.sets[tr.dataset.j];
+    const wIn = $('input[data-f="weight"]', tr);
+    const rIn = $('input[data-f="reps"]', tr);
+    if (from && from.value.trim()) {
+      const other = from === wIn ? rIn : wIn;
+      if (!other.value && isNum(other.placeholder)) other.value = other.placeholder;
+    }
+    set.weight = clean(wIn.value);
+    set.reps = clean(rIn.value);
+    const wasDone = set.done;
+    set.done = !!(set.weight && set.reps);
+    tr.classList.toggle('done', set.done);
+    updateCompare(tr.dataset.i);
+    // Folgesatz mit denselben Werten vorschlagen, wenn es dort keinen Wert vom letzten Training gibt.
+    const next = tr.nextElementSibling;
+    if (set.done && next && !entry.prev[Number(tr.dataset.j) + 1]) {
+      $('input[data-f="weight"]', next).placeholder = set.weight;
+      $('input[data-f="reps"]', next).placeholder = set.reps;
+    }
+    clearTimeout(saveTimer);
+    await db.put('sessions', session);
+    if (set.done && !wasDone && active) startRest(restSeconds);
+  };
+
+  // Fertig/Enter auf der Tastatur oder Feld verlassen = Satz speichern.
+  el.addEventListener('change', (e) => {
+    const input = e.target.closest('input[data-f]');
+    if (input) commitRow(input.closest('tr'), input);
+  });
+
+  // Beim Antippen den Inhalt markieren, damit neues Tippen ihn ersetzt.
+  el.addEventListener('focusin', (e) => {
+    const input = e.target.closest('input[data-f]');
+    if (input) setTimeout(() => input.select(), 0);
+  });
+
   el.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-act]');
     if (!btn) return;
@@ -241,29 +321,20 @@ export async function renderSession({ match, rerender }) {
     if (act === 'done') {
       const tr = btn.closest('tr');
       const set = entry.sets[tr.dataset.j];
+      if (set.done) {
+        set.done = false;
+        tr.classList.remove('done');
+        updateCompare(i);
+        await db.put('sessions', session);
+        return;
+      }
       const wIn = $('input[data-f="weight"]', tr);
       const rIn = $('input[data-f="reps"]', tr);
-      // Leere Felder mit dem Vorschlag (Platzhalter) füllen.
-      if (!set.done) {
-        const isNum = (v) => /^\d+([.,]\d+)?$/.test(v);
-        if (!wIn.value && isNum(wIn.placeholder)) wIn.value = wIn.placeholder;
-        if (!rIn.value && isNum(rIn.placeholder)) rIn.value = rIn.placeholder;
-        set.weight = clean(wIn.value);
-        set.reps = clean(rIn.value);
-        if (!set.reps) { toast('Bitte Wiederholungen eintragen'); rIn.focus(); return; }
-      }
-      set.done = !set.done;
-      tr.classList.toggle('done', set.done);
-      // Folgesatz mit gleichem Gewicht vorbelegen, wenn dort noch nichts steht.
-      const next = tr.nextElementSibling;
-      if (set.done && next && !entry.prev[Number(tr.dataset.j) + 1]) {
-        const nw = $('input[data-f="weight"]', next);
-        const nr = $('input[data-f="reps"]', next);
-        if (!nw.value && set.weight) nw.placeholder = set.weight;
-        if (!nr.value && set.reps) nr.placeholder = set.reps;
-      }
-      await db.put('sessions', session);
-      if (set.done && active) startRest(restSeconds);
+      if (!wIn.value && isNum(wIn.placeholder)) wIn.value = wIn.placeholder;
+      if (!rIn.value && isNum(rIn.placeholder)) rIn.value = rIn.placeholder;
+      if (!wIn.value) { toast('Bitte Gewicht eintragen (0 bei Körpergewicht)'); return wIn.focus(); }
+      if (!rIn.value) { toast('Bitte Wiederholungen eintragen'); return rIn.focus(); }
+      await commitRow(tr);
       return;
     }
     if (act === 'addset') {
@@ -282,12 +353,25 @@ export async function renderSession({ match, rerender }) {
         <div class="card tight">
           <button class="list-item" data-m="up" ${i === 0 ? 'disabled' : ''}>Nach oben</button>
           <button class="list-item" data-m="down" ${i === session.entries.length - 1 ? 'disabled' : ''}>Nach unten</button>
+          <button class="list-item" data-m="swap">Übung tauschen (z. B. Gerät besetzt)</button>
           <button class="list-item" data-m="remove" style="color:var(--warn)">Übung entfernen</button>
         </div>
         <button class="btn block" data-close>Abbrechen</button>`);
       sheet.addEventListener('click', async (ev) => {
         const m = ev.target.closest('[data-m]')?.dataset.m;
         if (!m) return;
+        if (m === 'swap') {
+          closeSheet();
+          return pickExercise(async (ex) => {
+            const sessions = (await db.all('sessions')).filter((s) => s.id !== session.id);
+            const fresh = makeEntry(ex, sessions, entry.sets.length, entry.targetReps);
+            // Schon eingetragene Sätze bleiben erhalten.
+            fresh.sets = fresh.sets.map((s, j) => entry.sets[j]?.done ? { ...entry.sets[j] } : s);
+            session.entries[i] = fresh;
+            await db.put('sessions', session);
+            rerender();
+          });
+        }
         if (m === 'up') [session.entries[i - 1], session.entries[i]] = [session.entries[i], session.entries[i - 1]];
         if (m === 'down') [session.entries[i + 1], session.entries[i]] = [session.entries[i], session.entries[i + 1]];
         if (m === 'remove') session.entries.splice(i, 1);
@@ -313,7 +397,13 @@ export async function renderSession({ match, rerender }) {
       session.finishedAt = new Date().toISOString();
       await db.put('sessions', session);
       stopRest();
-      toast(`Gespeichert · ${fmt(sessionVolume(session))} kg Volumen`);
+      await offerTemplateUpdate(session);
+      // Steigerung gegenüber dem letzten Training mit derselben Vorlage.
+      const before = sortSessions((await db.all('sessions')).filter((s) => s.finishedAt && s.id !== session.id && s.planId === session.planId))[0];
+      const vol = sessionVolume(session);
+      const prevVol = before ? sessionVolume(before) : 0;
+      const diff = prevVol ? Math.round(((vol - prevVol) / prevVol) * 100) : null;
+      toast(`Gespeichert · ${fmt(vol)} kg Volumen${diff !== null ? ` (${diff >= 0 ? '+' : ''}${diff} % ggü. letztem Mal)` : ''}`);
       location.hash = '#/train';
       return;
     }
@@ -327,13 +417,23 @@ export async function renderSession({ match, rerender }) {
     }
   });
 
-  // Enter springt ins nächste Feld.
+  // Enter: Satz speichern und zum nächsten Satz springen (Wdh überspringen, wenn schon ausgefüllt).
   el.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || !e.target.matches('input[data-f]')) return;
     e.preventDefault();
-    const inputs = $$('input[data-f]', el);
-    const next = inputs[inputs.indexOf(e.target) + 1];
-    if (next) next.focus(); else e.target.blur();
+    const input = e.target;
+    const tr = input.closest('tr');
+    const rIn = $('input[data-f="reps"]', tr);
+    // Enter im leeren Feld = Vorschlag übernehmen ("wie letztes Mal").
+    if (!input.value && isNum(input.placeholder)) {
+      input.value = input.placeholder;
+      commitRow(tr, input);
+    }
+    const repsReady = rIn.value || isNum(rIn.placeholder);
+    let target;
+    if (input.dataset.f === 'weight' && !repsReady) target = rIn;
+    else target = tr.nextElementSibling && $('input[data-f="weight"]', tr.nextElementSibling);
+    if (target) target.focus(); else input.blur();
   });
 }
 
@@ -426,23 +526,29 @@ function localStorageSafe(key, value) {
 
 export async function pickExercise(onPick) {
   const exercises = (await db.all('exercises')).sort((a, b) => a.name.localeCompare(b.name, 'de'));
-  const sheet = openSheet(`<h2>Übung wählen</h2>
-    <input type="search" id="exq" placeholder="Suchen oder neue Übung eingeben" autocomplete="off">
+  const sheet = openSheet(`<div class="row between"><h2>Übung wählen</h2><button class="btn small" data-close>Abbrechen</button></div>
+    <form id="exform"><input type="search" id="exq" placeholder="Suchen oder neue Übung eingeben" autocomplete="off" enterkeyhint="done"></form>
     <div style="height:10px"></div>
-    <div class="card tight" id="exlist"></div>
-    <button class="btn block" data-close>Abbrechen</button>`);
+    <div class="card tight" id="exlist"></div>`, { tall: true });
   const list = $('#exlist', sheet);
   const q = $('#exq', sheet);
   const draw = () => {
     const term = q.value.trim().toLowerCase();
     const hits = exercises.filter((x) => !term || x.name.toLowerCase().includes(term));
     const exact = exercises.some((x) => x.name.toLowerCase() === term);
-    list.innerHTML = (term && !exact ? `<button class="list-item" data-new="1" style="color:var(--accent)">+ „${esc(q.value.trim())}“ neu anlegen</button>` : '')
-      + hits.map((x) => `<button class="list-item" data-id="${x.id}"><span class="grow name">${esc(x.name)}</span><span class="meta">${esc(x.muscle || '')}</span></button>`).join('')
+    // Treffer zuerst (Enter nimmt den ersten), "neu anlegen" ans Ende.
+    list.innerHTML = hits.map((x) => `<button class="list-item" data-id="${x.id}"><span class="grow name">${esc(x.name)}</span><span class="meta">${esc(x.muscle || '')}</span></button>`).join('')
+      + (term && !exact ? `<button class="list-item" data-new="1" style="color:var(--accent)">+ „${esc(q.value.trim())}“ neu anlegen</button>` : '')
       + (hits.length || term ? '' : '<div class="meal-empty">Keine Übungen</div>');
   };
   draw();
   q.addEventListener('input', draw);
+  // Enter übernimmt den ersten Treffer (oder legt die neue Übung an).
+  $('#exform', sheet).addEventListener('submit', (e) => {
+    e.preventDefault();
+    const first = $('button', list);
+    if (first) first.click();
+  });
   list.addEventListener('click', async (e) => {
     const b = e.target.closest('button');
     if (!b) return;
@@ -466,7 +572,7 @@ export async function renderPlan({ match, rerender }) {
   const exMap = byId(await db.all('exercises'));
 
   const el = mount(`<div class="page">
-    <div class="topbar"><a class="back" href="#/train">‹ Training</a><div class="title">Plan bearbeiten</div><span class="spacer"></span></div>
+    <div class="topbar"><a class="back" href="#/train">‹ Training</a><div class="title">Vorlage bearbeiten</div><span class="spacer"></span></div>
     <label class="field"><span>Name</span><input id="pname" value="${esc(plan.name)}" autocomplete="off"></label>
     <div class="row between small muted" style="padding:0 4px 6px"><span>Übung</span><span>Sätze × Wdh</span></div>
     <div class="card tight">
@@ -482,7 +588,7 @@ export async function renderPlan({ match, rerender }) {
     </div>
     <button class="btn soft block" data-act="add">+ Übung hinzufügen</button>
     <p class="hint" style="margin-top:12px">Änderungen werden sofort gespeichert. Gewichte trägst du beim Training ein – die App merkt sich dann, was du zuletzt geschafft hast.</p>
-    <button class="btn danger block" data-act="delete">Plan löschen</button>
+    <button class="btn danger block" data-act="delete">Vorlage löschen</button>
   </div>`);
 
   const save = () => db.put('plans', plan);
@@ -500,7 +606,7 @@ export async function renderPlan({ match, rerender }) {
     if (act === 'up') { [plan.items[i - 1], plan.items[i]] = [plan.items[i], plan.items[i - 1]]; await save(); rerender(); }
     if (act === 'rm') { plan.items.splice(i, 1); await save(); rerender(); }
     if (act === 'add') pickExercise(async (ex) => { plan.items.push({ exerciseId: ex.id, sets: '3', reps: '8-12' }); await save(); rerender(); });
-    if (act === 'delete' && confirm(`Plan „${plan.name}“ löschen? Vergangene Trainings bleiben erhalten.`)) {
+    if (act === 'delete' && confirm(`Vorlage „${plan.name}“ löschen? Vergangene Trainings bleiben erhalten.`)) {
       await db.del('plans', plan.id);
       location.replace('#/train');
     }

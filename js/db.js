@@ -1,7 +1,7 @@
 // Lokale Datenbank (IndexedDB). Alle Daten bleiben auf dem Gerät.
 const DB_NAME = 'fittrack';
-const VERSION = 1;
-export const STORES = ['exercises', 'plans', 'sessions', 'foods', 'logs', 'weights', 'settings'];
+const VERSION = 2;
+export const STORES = ['exercises', 'plans', 'sessions', 'foods', 'logs', 'weights', 'settings', 'meals'];
 
 let dbPromise;
 

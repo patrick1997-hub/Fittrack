@@ -1,7 +1,8 @@
 // Profil: Körperdaten, Kalorienziel, KI-Schlüssel, Training, Datensicherung.
 import { getSetting, setSetting, exportAll, importAll } from './db.js';
 import { esc, mount, toast, num, fmt, round, dateStr, $ } from './ui.js';
-import { ACTIVITY, GOALS, computeTargets } from './calc.js';
+import { ACTIVITY, DAILY, GOALS, computeTargets, trainingSeparate } from './calc.js';
+import { adaptiveEstimate, NEED_DAYS, NEED_WEIGHINS } from './targets.js';
 import { MODELS, DEFAULT_MODEL } from './ai.js';
 
 export async function renderSettings({ rerender }) {
@@ -9,7 +10,7 @@ export async function renderSettings({ rerender }) {
     getSetting('profile', {}), getSetting('goals', {}), getSetting('apiKey', ''),
     getSetting('aiModel', DEFAULT_MODEL), getSetting('restSeconds', 90),
   ]);
-  const p = { sex: 'm', activity: 1.55, goal: 'keep', ...profile };
+  const p = { sex: 'm', activity: 1.55, daily: 1.375, goal: 'keep', ...profile };
   let persisted = null;
   try { persisted = navigator.storage?.persisted ? await navigator.storage.persisted() : null; } catch { /* egal */ }
 
@@ -24,13 +25,20 @@ export async function renderSettings({ rerender }) {
         <label class="field"><span>Größe (cm)</span><input id="height" inputmode="numeric" value="${esc(p.height || '')}" placeholder="cm"></label>
         <label class="field"><span>Gewicht (kg)</span><input id="weight" inputmode="decimal" value="${esc(p.weight || '')}" placeholder="kg"></label>
       </div>
-      <label class="field"><span>Aktivität</span><select id="activity">${ACTIVITY.map((a) => `<option value="${a.value}" ${Number(p.activity) === a.value ? 'selected' : ''}>${a.label}</option>`).join('')}</select></label>
+      <label class="field"><span>Körperfett in % (optional)</span><input id="bodyfat" inputmode="decimal" value="${esc(p.bodyFat || '')}" placeholder="z. B. 15"></label>
+      <p class="hint">Mit Körperfett rechnet die App über deine Muskelmasse (Katch-McArdle) – bei trainierten Menschen genauer. Eine Körperfettwaage reicht als Wert.</p>
+      <label class="check-row"><input type="checkbox" id="tbonus" ${trainingSeparate(p) ? 'checked' : ''}> Training extra einrechnen (empfohlen)</label>
+      <label class="field"><span id="actlabel"></span><select id="activity"></select></label>
       <label class="field"><span>Ziel</span><select id="goal">${GOALS.map((g) => `<option value="${g.value}" ${p.goal === g.value ? 'selected' : ''}>${g.label}</option>`).join('')}</select></label>
       <div id="calcinfo" class="hint"></div>
       <button class="btn soft block" data-act="calc">Ziel berechnen</button>
     </div>
 
+    <h2>Anpassendes Ziel</h2>
+    <div class="card" id="adaptive"><div class="spinner"></div></div>
+
     <h2>Tagesziel</h2>
+    <p class="hint" id="goalhint">${trainingSeparate(p) ? 'Gilt für Ruhetage. An Trainingstagen kommt der Trainingsverbrauch automatisch dazu (als Kohlenhydrate).' : 'Gilt für jeden Tag (Training ist im Aktivitätsfaktor enthalten).'}</p>
     <div class="card">
       <div class="fields-2">
         <label class="field"><span>Kalorien (kcal)</span><input id="g_kcal" inputmode="numeric" value="${esc(goals.kcal || '')}"></label>
@@ -67,13 +75,66 @@ export async function renderSettings({ rerender }) {
     <p class="center muted small">FitTrack · läuft komplett im Browser</p>
   </div>`);
 
+  // Aktivitätsliste je nach Modus: Alltag ohne Training oder pauschal mit Training.
+  let daily = Number(p.daily || 1.375);
+  let activity = Number(p.activity || 1.55);
+  const drawActivity = () => {
+    const sep = $('#tbonus', el).checked;
+    const list = sep ? DAILY : ACTIVITY;
+    const current = sep ? daily : activity;
+    $('#actlabel', el).textContent = sep ? 'Alltag (ohne Training)' : 'Aktivität (inkl. Training)';
+    $('#activity', el).innerHTML = list.map((a) => `<option value="${a.value}" ${current === a.value ? 'selected' : ''}>${a.label}</option>`).join('');
+  };
+  drawActivity();
+  $('#tbonus', el).addEventListener('change', drawActivity);
+  $('#activity', el).addEventListener('change', (e) => {
+    if ($('#tbonus', el).checked) daily = Number(e.target.value); else activity = Number(e.target.value);
+  });
+
   const readProfile = () => ({
     sex: $('#sex', el).value,
     age: num($('#age', el).value) || '',
     height: num($('#height', el).value) || '',
     weight: num($('#weight', el).value) || '',
-    activity: Number($('#activity', el).value),
+    bodyFat: num($('#bodyfat', el).value) || '',
+    trainingBonus: $('#tbonus', el).checked,
+    daily,
+    activity,
     goal: $('#goal', el).value,
+  });
+
+  const fillGoals = (g) => {
+    $('#g_kcal', el).value = g.kcal;
+    $('#g_protein', el).value = g.protein;
+    $('#g_carbs', el).value = g.carbs;
+    $('#g_fat', el).value = g.fat;
+  };
+
+  // Anpassendes Ziel laden (rechnet über die letzten 3 Wochen).
+  adaptiveEstimate().then((a) => {
+    const box = $('#adaptive', el);
+    if (!box) return;
+    if (!a.ready) {
+      box.innerHTML = `<p style="margin:0 0 8px">Die App lernt aus deinen Daten, wie viel du <b>wirklich</b> verbrauchst: Ø Essen und wie sich dabei dein Gewicht verändert.</p>
+        <div class="row between small"><span>Tage mit Essen eingetragen (letzte 3 Wochen)</span><b>${a.trackedDays} / ${NEED_DAYS}</b></div>
+        <div class="row between small" style="margin-top:4px"><span>Wiegungen (über ≥ 10 Tage verteilt)</span><b>${a.weighIns} / ${NEED_WEIGHINS}</b></div>
+        <p class="hint" style="margin:10px 0 0">Am besten 3–4× pro Woche morgens nüchtern wiegen (Fortschritt › Körpergewicht) und das Essen möglichst vollständig eintragen.</p>`;
+      return;
+    }
+    const s = a.suggestion;
+    box.innerHTML = `<div class="kv" style="grid-template-columns:1fr auto">
+        <span class="muted">Ø gegessen</span><b>${fmt(a.avgIntake)} kcal</b>
+        <span class="muted">Gewichtstrend</span><b>${a.kgPerWeek > 0 ? '+' : ''}${fmt(a.kgPerWeek, 2)} kg/Woche</b>
+        <span>Dein echter Verbrauch</span><b>${fmt(a.tdee)} kcal</b>
+        ${a.formulaTdee ? `<span class="muted">laut Formel</span><b class="muted">${fmt(a.formulaTdee)} kcal</b>` : ''}
+      </div>
+      <p class="hint" style="margin:10px 0">Empfohlenes Tagesziel${trainingSeparate(p) ? ' für Ruhetage' : ''}: <b>${fmt(s.kcal)} kcal</b> · E ${fmt(s.protein)} · K ${fmt(s.carbs)} · F ${fmt(s.fat)} g</p>
+      <button class="btn soft block" data-act="adopt">Übernehmen</button>`;
+    $('[data-act="adopt"]', box).addEventListener('click', async () => {
+      fillGoals(s);
+      await setSetting('goals', { ...s, source: 'adaptive', updatedAt: dateStr() });
+      toast('Anpassendes Ziel übernommen');
+    });
   });
 
   el.addEventListener('click', async (e) => {
@@ -84,11 +145,11 @@ export async function renderSettings({ rerender }) {
       const t = computeTargets(prof);
       if (!t) return toast('Bitte Alter, Größe und Gewicht eintragen');
       await setSetting('profile', prof);
-      $('#g_kcal', el).value = t.kcal;
-      $('#g_protein', el).value = t.protein;
-      $('#g_carbs', el).value = t.carbs;
-      $('#g_fat', el).value = t.fat;
-      $('#calcinfo', el).textContent = `Grundumsatz ${fmt(t.bmr)} kcal · Gesamtumsatz ${fmt(t.tdee)} kcal. Werte eingetragen – du kannst sie anpassen und dann speichern.`;
+      fillGoals(t);
+      $('#calcinfo', el).textContent = `Grundumsatz ${fmt(t.bmr)} kcal (${t.formula}) · ${prof.trainingBonus ? 'Ruhetag' : 'Gesamtumsatz'} ${fmt(t.tdee)} kcal. Werte eingetragen – prüfen und speichern.`;
+      $('#goalhint', el).textContent = prof.trainingBonus
+        ? 'Gilt für Ruhetage. An Trainingstagen kommt der Trainingsverbrauch automatisch dazu (als Kohlenhydrate).'
+        : 'Gilt für jeden Tag (Training ist im Aktivitätsfaktor enthalten).';
     }
     if (act === 'savegoals') {
       const g = {

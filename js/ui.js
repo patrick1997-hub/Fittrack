@@ -63,12 +63,13 @@ export function mount(html) {
 
 let sheetEl = null;
 
-export function openSheet(html, { onClose } = {}) {
+// tall: volle Höhe, Inhalt oben – für Suchen, damit die Tastatur die Treffer nicht verdeckt.
+export function openSheet(html, { onClose, tall = false } = {}) {
   closeSheet();
   const root = document.getElementById('sheet-root');
   const wrap = document.createElement('div');
   wrap.className = 'sheet-wrap';
-  wrap.innerHTML = `<div class="sheet-backdrop"></div><div class="sheet" role="dialog" aria-modal="true"><div class="sheet-grip"></div>${html}</div>`;
+  wrap.innerHTML = `<div class="sheet-backdrop"></div><div class="sheet${tall ? ' tall' : ''}" role="dialog" aria-modal="true"><div class="sheet-grip"></div>${html}</div>`;
   root.appendChild(wrap);
   wrap.querySelector('.sheet-backdrop').addEventListener('click', () => closeSheet());
   wrap.addEventListener('click', (e) => {

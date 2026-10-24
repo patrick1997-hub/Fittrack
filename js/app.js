@@ -8,6 +8,7 @@ import { $$, closeSheet } from './ui.js';
 const routes = [
   [/^\/food$/, 'food', nutrition.renderDay],
   [/^\/food\/add$/, 'food', nutrition.renderAdd],
+  [/^\/food\/week$/, 'food', nutrition.renderWeek],
   [/^\/train$/, 'train', training.renderHome],
   [/^\/train\/session\/([\w-]+)$/, 'train', training.renderSession],
   [/^\/train\/plan\/([\w-]+)$/, 'train', training.renderPlan],

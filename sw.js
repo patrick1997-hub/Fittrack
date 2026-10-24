@@ -1,5 +1,5 @@
 // Service Worker: App offline verfügbar machen.
-const CACHE = 'fittrack-v2';
+const CACHE = 'fittrack-v3';
 const SHELL = [
   './',
   './index.html',
@@ -25,7 +25,12 @@ const SHELL = [
 const NETWORK_ONLY = ['api.anthropic.com', 'openfoodfacts.org'];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' umgeht den HTTP-Cache von GitHub Pages (10 Minuten), sonst landen alte Dateien im neuen Cache.
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((c) => c.addAll(SHELL.map((url) => new Request(url, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -56,7 +61,7 @@ self.addEventListener('fetch', (event) => {
   // Eigene Dateien: Netz zuerst (damit Updates ankommen), sonst Cache.
   if (url.origin === self.location.origin) {
     event.respondWith(
-      fetch(request).then((res) => {
+      fetch(new Request(request.url, { cache: 'no-cache', credentials: 'same-origin' })).then((res) => {
         if (res.ok) {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(request, copy));

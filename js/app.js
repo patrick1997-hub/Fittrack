@@ -55,7 +55,15 @@ async function start() {
   await render();
   training.restoreRestTimer();
   if ('serviceWorker' in navigator && location.protocol === 'https:') {
-    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
+    // Neue Version aktiv → einmal neu laden, damit sie sofort gilt (nicht erst beim nächsten Öffnen).
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (hadController && !reloaded) { reloaded = true; location.reload(); }
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then((reg) => reg.update())
+      .catch((e) => console.warn('SW', e));
   }
   if (navigator.storage && navigator.storage.persist) {
     navigator.storage.persist().catch(() => {});
